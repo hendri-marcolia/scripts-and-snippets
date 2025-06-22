@@ -1,0 +1,203 @@
+// ==UserScript==
+        // @name         WhatsApp Message Initial Appender
+        // @namespace    http://tampermonkey.net/
+        // @version      1.2 // Version updated to reflect changes
+        // @description  Appends user initials to WhatsApp Web messages upon sending, supports Enter key.
+        // @author       Gemini
+        // @match        https://web.whatsapp.com/*
+        // @grant        none
+        // ==/UserScript==
+
+        (function() {
+            'use strict';
+
+            // --- CONFIGURATION ---
+            // Set your initials here. They will be appended to your message.
+            const MY_INITIALS = "- *BB*";
+            // The string that will separate your message from the initials.
+            const SEPARATOR = "\n\n";
+            // --- END CONFIGURATION ---
+
+            let messageInput = null;
+            let sendButton = null;
+            let listenerAttached = false;      // Flag for click listener
+            let enterListenerAttached = false; // Flag for keydown listener
+
+            /**
+             * Attempts to find the WhatsApp message input and send button elements.
+             */
+            function findElements() {
+                // Selectors for WhatsApp Web elements.
+                // These selectors might need to be updated if WhatsApp Web changes its structure.
+                // The message input is usually a div with contenteditable="true"
+                // The send button usually has an aria-label="Send" or data-icon="send"
+
+                // Attempt 1: Specific selectors commonly found
+                messageInput = document.querySelector('div[contenteditable="true"][data-tab="10"]');
+                if (!messageInput) {
+                    messageInput = document.querySelector('div[contenteditable="true"][spellcheck="true"]');
+                }
+                console.log("Found messageInput element:", messageInput);
+
+                // Keep existing send button selectors
+                sendButton = document.querySelector('button[aria-label="Send"]');
+                if (!sendButton) {
+                    sendButton = document.querySelector('span[data-icon="send"] + button'); // Button next to send icon
+                    if (!sendButton) {
+                        sendButton = document.querySelector('div[role="button"][data-tab="11"]'); // Another common send button wrapper
+                        if (!sendButton) {
+                            sendButton = document.querySelector('button[data-testid="send"]'); // Newer test id
+                        }
+                    }
+                }
+                console.log("Found sendButton element:", sendButton);
+            }
+
+            function setCursorAtEnd(element) {
+                const range = document.createRange();
+                const selection = window.getSelection();
+                range.selectNodeContents(element);
+                range.collapse(false); // Collapse range to the end
+                selection.removeAllRanges();
+                selection.addRange(range);
+            }
+
+            function simulateTyping(element, text) {
+                element.focus();
+                for (const char of text) {
+                    const event = new InputEvent('beforeinput', {
+                        inputType: 'insertText',
+                        data: char,
+                        bubbles: true,
+                        cancelable: true
+                    });
+                    element.dispatchEvent(event);
+                    element.textContent += char; // mimic visual update
+                }
+            }
+            /**
+             * The core logic to append initials and dispatch events, then trigger the send.
+             */
+            function appendInitialsAndSend() {
+                if (!messageInput) {
+                    console.error("WhatsApp initial appender: messageInput is null. Cannot modify text.");
+                    return;
+                }
+
+                let currentText = messageInput.innerText.trim();
+                console.log("Current text before modification:", currentText);
+
+                // Only append if the current text is not empty and initials are not already there
+                if (currentText && !currentText.endsWith(SEPARATOR + MY_INITIALS)) {
+                    const newText = currentText + SEPARATOR + MY_INITIALS;
+
+                    // Attempt to clear the input field and insert new text using execCommand.
+                    // This is often more reliable for contenteditable elements managed by frameworks.
+                    messageInput.focus(); // Ensure the element is focused for execCommand
+
+                    // Select all text
+                    //document.execCommand('selectAll', false, null);
+                    // Delete selected text
+                    //document.execCommand('delete', false, null);
+
+                    //setCursorAtEnd(messageInput);
+
+                    // Insert the new combined text
+                    //document.execCommand('insertText', false, newText);
+                    simulateTyping(messageInput, SEPARATOR + MY_INITIALS);
+
+                    console.log("Text after modification (via execCommand):", messageInput.innerText);
+
+                    // Dispatch input and change events to ensure WhatsApp's internal state updates.
+                    const inputEvent = new Event('input', { bubbles: true });
+                    messageInput.dispatchEvent(inputEvent);
+
+                    const changeEvent = new Event('change', { bubbles: true });
+                    messageInput.dispatchEvent(changeEvent);
+
+                    // Add a slight delay before sending to ensure WhatsApp processes the input events
+                    setTimeout(() => {
+                        if (sendButton) {
+                            sendButton.click();
+                            console.log("WhatsApp initial appender: Programmatically clicked send button after appending initials and delay.");
+                        } else {
+                            console.error("WhatsApp initial appender: Send button not found for programmatic click after modification.");
+                        }
+                    }, 100); // 100ms delay for robustness
+                } else if (currentText && currentText.endsWith(SEPARATOR + MY_INITIALS)) {
+                    console.log("WhatsApp initial appender: Initials already present, sending message directly.");
+                    if (sendButton) {
+                        sendButton.click();
+                    }
+                } else {
+                    console.log("WhatsApp initial appender: Message text is empty or only whitespace, sending directly without initials.");
+                    if (sendButton) {
+                        sendButton.click();
+                    }
+                }
+            }
+
+            /**
+             * Sets up the event listeners for the send button (click) and message input (Enter key).
+             */
+            function setupWhatsAppListeners() {
+                findElements(); // Find elements first
+
+                if (messageInput && sendButton) {
+                    if (!listenerAttached) {
+                        // Attach click listener to the send button
+                        sendButton.addEventListener('click', function(event) {
+                            event.preventDefault(); // Prevent default send to allow modification first
+                            console.log("WhatsApp initial appender: Send button clicked, intercepting.");
+                            appendInitialsAndSend();
+                        });
+                        listenerAttached = true;
+                        console.log("WhatsApp initial appender: Click listener attached to send button.");
+                    }
+
+                    if (!enterListenerAttached) {
+                        // Attach keydown listener to the message input
+                        messageInput.addEventListener('keydown', function(event) {
+                            // Check for 'Enter' key and ensure Shift key is NOT pressed (Shift+Enter is for new line)
+                            if (event.key === 'Enter' && !event.shiftKey) {
+                                event.preventDefault(); // Prevent default Enter action (sending message immediately)
+                                console.log("WhatsApp initial appender: Enter key pressed, intercepting.");
+                                appendInitialsAndSend();
+                            }
+                        });
+                        enterListenerAttached = true;
+                        console.log("WhatsApp initial appender: Keydown listener attached to message input.");
+                    }
+                } else {
+                    if (!messageInput) {
+                        console.log("WhatsApp initial appender: Message input not found yet. Will retry on next DOM change.");
+                    }
+                    if (!sendButton) {
+                        console.log("WhatsApp initial appender: Send button not found yet. Will retry on next DOM change.");
+                    }
+                }
+            }
+
+            // Use a MutationObserver to watch for changes in the DOM, specifically when
+            // the WhatsApp chat interface loads or changes (e.g., switching conversations).
+            const observer = new MutationObserver((mutationsList, observer) => {
+                // If either listener is not attached, or if the elements are no longer in the DOM (e.g., chat changed)
+                if (!listenerAttached || !enterListenerAttached || !document.body.contains(messageInput) || !document.body.contains(sendButton)) {
+                     // Reset flags if elements are no longer in DOM to force re-attachment
+                    if (!document.body.contains(messageInput) || !document.body.contains(sendButton)) {
+                        console.log("WhatsApp initial appender: Elements disappeared from DOM, resetting listener flags.");
+                        listenerAttached = false;
+                        enterListenerAttached = false;
+                    }
+                    setupWhatsAppListeners(); // Attempt to set up listeners again
+                }
+            });
+
+            // Start observing the document body for subtree modifications
+            observer.observe(document.body, { childList: true, subtree: true });
+
+            // Also run setup once on script load, in case the elements are already present
+            setupWhatsAppListeners();
+
+            console.log("WhatsApp Message Initial Appender script loaded. Waiting for chat interface...");
+        })();
