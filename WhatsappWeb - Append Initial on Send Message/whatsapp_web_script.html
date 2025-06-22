@@ -1,8 +1,8 @@
 // ==UserScript==
         // @name         WhatsApp Message Initial Appender
         // @namespace    http://tampermonkey.net/
-        // @version      1.2 // Version updated to reflect changes
-        // @description  Appends user initials to WhatsApp Web messages upon sending, supports Enter key.
+        // @version      1.6 // Version updated for robust Enter key handling
+        // @description  Appends user initials to WhatsApp Web messages upon sending, supports Enter key and paste simulation.
         // @author       Gemini
         // @match        https://web.whatsapp.com/*
         // @grant        none
@@ -13,7 +13,7 @@
 
             // --- CONFIGURATION ---
             // Set your initials here. They will be appended to your message.
-            const MY_INITIALS = "- *BB*";
+            const MY_INITIALS = "- *HM*";
             // The string that will separate your message from the initials.
             const SEPARATOR = "\n\n";
             // --- END CONFIGURATION ---
@@ -53,62 +53,75 @@
                 console.log("Found sendButton element:", sendButton);
             }
 
-            function setCursorAtEnd(element) {
-                const range = document.createRange();
-                const selection = window.getSelection();
-                range.selectNodeContents(element);
-                range.collapse(false); // Collapse range to the end
-                selection.removeAllRanges();
-                selection.addRange(range);
-            }
+            /**
+             * Simulates a paste event into a contenteditable element.
+             * This method is generally more robust for setting text in complex contenteditable areas
+             * compared to character-by-character typing or direct innerText manipulation,
+             * as it mimics a native user action that frameworks often handle.
+             * @param {HTMLElement} element - The contenteditable element to paste into.
+             * @param {string} text - The text string to simulate pasting.
+             */
+            function simulatePaste(element, text) {
+                element.focus(); // Ensure the element is focused
 
-            function simulateTyping(element, text) {
-                element.focus();
-                for (const char of text) {
-                    const event = new InputEvent('beforeinput', {
-                        inputType: 'insertText',
-                        data: char,
-                        bubbles: true,
-                        cancelable: true
-                    });
-                    element.dispatchEvent(event);
-                    element.textContent += char; // mimic visual update
+                // Create a DataTransfer object to hold the text data
+                const dataTransfer = new DataTransfer();
+                dataTransfer.setData('text/plain', text);
+
+                // Create a ClipboardEvent of type 'paste'
+                const pasteEvent = new ClipboardEvent('paste', {
+                    clipboardData: dataTransfer,
+                    bubbles: true,
+                    cancelable: true
+                });
+
+                // Dispatch the paste event on the element
+                element.dispatchEvent(pasteEvent);
+
+                // For some contenteditable elements, the text might not update visually
+                // unless innerText is also set. This acts as a fallback/reinforcement.
+                // However, the ideal is for the paste event to be handled by the app.
+                if (!pasteEvent.defaultPrevented) {
+                     // If the application did not prevent default on the paste event,
+                     // it means it might not have fully processed it, or it expects
+                     // us to handle the content update. So, as a fallback, update innerText.
+                     element.innerText = text;
+                     // Then dispatch input event
+                     element.dispatchEvent(new Event('input', { bubbles: true }));
                 }
             }
+
+
             /**
              * The core logic to append initials and dispatch events, then trigger the send.
+             * @param {string} initialMessageText - The text of the message *before* modification.
              */
-            function appendInitialsAndSend() {
+            function appendInitialsAndSend(initialMessageText) {
                 if (!messageInput) {
                     console.error("WhatsApp initial appender: messageInput is null. Cannot modify text.");
                     return;
                 }
 
-                let currentText = messageInput.innerText.trim();
-                console.log("Current text before modification:", currentText);
+                // Use the passed initial message text directly, as it was captured immediately
+                let currentText = initialMessageText.trim();
+                console.log("Current text before modification (passed):", currentText);
 
                 // Only append if the current text is not empty and initials are not already there
                 if (currentText && !currentText.endsWith(SEPARATOR + MY_INITIALS)) {
-                    const newText = currentText + SEPARATOR + MY_INITIALS;
+                    const newText = SEPARATOR + MY_INITIALS;
 
-                    // Attempt to clear the input field and insert new text using execCommand.
-                    // This is often more reliable for contenteditable elements managed by frameworks.
-                    messageInput.focus(); // Ensure the element is focused for execCommand
+                    messageInput.focus(); // Ensure the element is focused
 
-                    // Select all text
-                    //document.execCommand('selectAll', false, null);
-                    // Delete selected text
-                    //document.execCommand('delete', false, null);
+                    // Clear existing content
+                    messageInput.innerText = '';
+                    messageInput.dispatchEvent(new Event('input', { bubbles: true }));
 
-                    //setCursorAtEnd(messageInput);
+                    // Now, simulate pasting the *entire* combined new text
+                    simulatePaste(messageInput, newText);
 
-                    // Insert the new combined text
-                    //document.execCommand('insertText', false, newText);
-                    simulateTyping(messageInput, SEPARATOR + MY_INITIALS);
+                    console.log("Text after modification (via simulatePaste):", messageInput.innerText);
 
-                    console.log("Text after modification (via execCommand):", messageInput.innerText);
-
-                    // Dispatch input and change events to ensure WhatsApp's internal state updates.
+                    // Dispatch final input and change events to ensure WhatsApp's internal state is fully updated.
                     const inputEvent = new Event('input', { bubbles: true });
                     messageInput.dispatchEvent(inputEvent);
 
@@ -149,7 +162,8 @@
                         sendButton.addEventListener('click', function(event) {
                             event.preventDefault(); // Prevent default send to allow modification first
                             console.log("WhatsApp initial appender: Send button clicked, intercepting.");
-                            appendInitialsAndSend();
+                            // Pass the current text at the time of click
+                            appendInitialsAndSend(messageInput.innerText);
                         });
                         listenerAttached = true;
                         console.log("WhatsApp initial appender: Click listener attached to send button.");
@@ -161,8 +175,10 @@
                             // Check for 'Enter' key and ensure Shift key is NOT pressed (Shift+Enter is for new line)
                             if (event.key === 'Enter' && !event.shiftKey) {
                                 event.preventDefault(); // Prevent default Enter action (sending message immediately)
+                                event.stopPropagation(); // Stop event from bubbling further to prevent default WhatsApp behavior
                                 console.log("WhatsApp initial appender: Enter key pressed, intercepting.");
-                                appendInitialsAndSend();
+                                // Pass the current text at the time of keydown
+                                appendInitialsAndSend(messageInput.innerText);
                             }
                         });
                         enterListenerAttached = true;
