@@ -1,15 +1,21 @@
-::vsc::Run, code
-::notepad::Run, notepad.exe
-::cmd::Run, cmd.exe
+::vsc::Run 'code'
+::notepad::Run 'notepad.exe'
+::cmd::Run 'cmd.exe'
 
-^!t::  ; Ctrl+Alt+T
-FormatTime, now,, yyyy-MM-dd HH:mm:ss
-SendInput %now%
-return
+^!d:: {  ; Ctrl+Alt+D
+    now := FormatTime(, "yyyy-MM-dd HH:mm:ss")
+    SendText now
+}
 
-^!p::
-InputBox, users, Enter User Count
-InputBox, pricePerUser, Price per User
-total := users * pricePerUser
-MsgBox, % "Total Monthly Revenue: $" . total
-return
+^!p:: {
+    users := 0
+    pricePerUser := 0.0
+
+    if !InputBox(&users, "Enter User Count")
+        return
+    if !InputBox(&pricePerUser, "Price per User")
+        return
+
+    total := users * pricePerUser
+    MsgBox "Total Monthly Revenue: $" total
+}
