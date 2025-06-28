@@ -1,19 +1,25 @@
 // ==UserScript==
         // @name         WhatsApp Message Initial Appender
         // @namespace    http://tampermonkey.net/
-        // @version      1.1 // Version updated for robust Enter key handling
-        // @description  Appends user initials to WhatsApp Web messages upon sending, supports Enter key and paste simulation.
+        // @version      1.7 // Version updated for configurable initials via GM_getValue/setValue
+        // @description  Appends user initials to WhatsApp Web messages upon sending, supports Enter key.
         // @author       Gemini
         // @match        https://web.whatsapp.com/*
-        // @grant        none
+        // @grant        GM_getValue
+        // @grant        GM_setValue
+        // @grant        window.prompt
+        // @grant        window.alert
         // ==/UserScript==
 
         (function() {
             'use strict';
 
             // --- CONFIGURATION ---
-            // Set your initials here. They will be appended to your message.
-            const MY_INITIALS = "- *HM*"; //TODO: Dynamically set this to your initials
+            // Set your initials here. They will be loaded from Tampermonkey storage.
+            // Default value if not set in storage.
+            const DEFAULT_INITIALS = "- *AA*";
+            let MY_INITIALS; // This will hold the current initials, loaded from storage.
+
             // The string that will separate your message from the initials.
             const SEPARATOR = "\n\n";
             // --- END CONFIGURATION ---
@@ -22,6 +28,67 @@
             let sendButton = null;
             let listenerAttached = false;      // Flag for click listener
             let enterListenerAttached = false; // Flag for keydown listener
+            let settingsButton = null;         // Reference to the settings button
+
+            /**
+             * Loads initials from Tampermonkey storage, or sets a default if not found.
+             */
+            function loadInitials() {
+                MY_INITIALS = GM_getValue('userInitials', DEFAULT_INITIALS);
+                console.log("Loaded initials from Tampermonkey storage:", MY_INITIALS);
+                // If the default was just set, save it back to storage for persistence
+                if (MY_INITIALS === DEFAULT_INITIALS && GM_getValue('userInitials') === undefined) {
+                    GM_setValue('userInitials', DEFAULT_INITIALS);
+                }
+            }
+
+            /**
+             * Creates and appends a settings button to the WhatsApp Web page.
+             */
+            function createSettingsButton() {
+                // Prevent adding multiple buttons
+                if (settingsButton && document.body.contains(settingsButton)) {
+                    return;
+                }
+
+                settingsButton = document.createElement('button');
+                settingsButton.innerText = 'Set Initials';
+                settingsButton.style.cssText = `
+                    position: fixed;
+                    bottom: 60px;
+                    right: 20px;
+                    z-index: 10000;
+                    background-color: #25D366; /* WhatsApp green */
+                    color: white;
+                    border: none;
+                    border-radius: 50px;
+                    padding: 10px 15px;
+                    font-size: 14px;
+                    cursor: pointer;
+                    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+                    transition: background-color 0.2s ease;
+                `;
+                settingsButton.onmouseover = () => settingsButton.style.backgroundColor = '#128C7E';
+                settingsButton.onmouseout = () => settingsButton.style.backgroundColor = '#25D366';
+
+                settingsButton.addEventListener('click', () => {
+                    const newInitials = window.prompt("Enter your initials (e.g., - *AA*):", MY_INITIALS);
+                    if (newInitials !== null && newInitials.trim() !== '') {
+                        GM_setValue('userInitials', newInitials.trim());
+                        MY_INITIALS = newInitials.trim(); // Update the in-memory variable
+                        window.alert("Initials updated! Please refresh WhatsApp Web for changes to take full effect.");
+                        console.log("Initials updated to:", MY_INITIALS);
+                        // Optional: Reload the page to ensure all listeners are re-attached with new initials
+                        // location.reload();
+                    } else if (newInitials !== null) {
+                        window.alert("Initials cannot be empty.");
+                    }
+                });
+
+                document.body.appendChild(settingsButton);
+                console.log("Settings button added to the page.");
+            }
+
 
             /**
              * Attempts to find the WhatsApp message input and send button elements.
@@ -128,15 +195,15 @@
                     const changeEvent = new Event('change', { bubbles: true });
                     messageInput.dispatchEvent(changeEvent);
 
-                    // Add a slight delay before sending to ensure WhatsApp processes the input events
+                    // Allow a very small delay before clicking send to ensure WhatsApp processes the input events
                     setTimeout(() => {
                         if (sendButton) {
                             sendButton.click();
-                            console.log("WhatsApp initial appender: Programmatically clicked send button after appending initials and delay.");
+                            console.log("WhatsApp initial appender: Programmatically clicked send button after appending initials and immediate update.");
                         } else {
                             console.error("WhatsApp initial appender: Send button not found for programmatic click after modification.");
                         }
-                    }, 100); // 100ms delay for robustness
+                    }, 10); // Reduced delay to 10ms for faster execution
                 } else if (currentText && currentText.endsWith(SEPARATOR + MY_INITIALS)) {
                     console.log("WhatsApp initial appender: Initials already present, sending message directly.");
                     if (sendButton) {
@@ -155,6 +222,7 @@
              */
             function setupWhatsAppListeners() {
                 findElements(); // Find elements first
+                createSettingsButton(); // Add the settings button
 
                 if (messageInput && sendButton) {
                     if (!listenerAttached) {
@@ -181,6 +249,20 @@
                                 appendInitialsAndSend(messageInput.innerText);
                             }
                         });
+                        messageInput.addEventListener('keydown', function(event) {
+                            if (event.key === 'Enter' && !event.shiftKey) {
+                                event.preventDefault(); // STOP WhatsApp's default behavior
+                                event.stopPropagation(); // Even more aggressive
+                                console.log("Intercepted Enter keydown — blocking default behavior.");
+                            }
+                        });
+
+                        messageInput.addEventListener('keyup', function(event) {
+                            if (event.key === 'Enter' && !event.shiftKey) {
+                                console.log("Handling Enter keyup — appending initials and sending.");
+                                appendInitialsAndSend(messageInput.innerText);
+                            }
+                        });
                         enterListenerAttached = true;
                         console.log("WhatsApp initial appender: Keydown listener attached to message input.");
                     }
@@ -193,6 +275,9 @@
                     }
                 }
             }
+
+            // --- Initial setup and MutationObserver ---
+            loadInitials(); // Load initials when the script starts
 
             // Use a MutationObserver to watch for changes in the DOM, specifically when
             // the WhatsApp chat interface loads or changes (e.g., switching conversations).
